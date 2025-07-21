@@ -64,7 +64,7 @@ def initialize_zoho_sdk(client_id: str, client_secret: str, refresh_token: str, 
         logger.exception(f"Error inesperado al inicializar el SDK: {e}")
         raise # Relanzar para que el orquestador sepa que falló
 
-def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, column_date:str):
+def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, column_date:str, next_page_token:str = None ):
     """
     Crea un trabajo de Bulk Read en Zoho.
     Retorna el job_id si tiene éxito, de lo contrario None.
@@ -73,16 +73,19 @@ def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, colum
         module_api_name (str): nombre del modulo de zoho
         page (int): numero de pagina a extraer de zoho
         full_data (bool): variable binaria que indica si se van a extraer todos los datos (TRUE), o solo los de los ultimos 7 dias(False)
+        next_page_token (str | None): Token para la siguiente página de registros, si existe.
     """
     try:
-        logger.info(f"Creando trabajo para el módulo '{module_api_name}', página {page}...")
+        logger.info(f"Creando trabajo para el módulo '{module_api_name}', página {page}..."+(f" con token '{next_page_token}'" if next_page_token else "") + "...")
         bulk_read_operations = BulkReadOperations()
         request = RequestWrapper()
         query = Query()
-        query.set_module(module_api_name)
-        query.set_page(page)
-        request.set_query(query)
-        request.set_file_type(Choice('csv'))
+
+        if next_page_token:
+            query.set_page_token(next_page_token)
+        else:
+            query.set_module(module_api_name)
+            query.set_page(page)
 
         if not full_data:
             seven_days_ago = datetime.now() - timedelta(days=7)
@@ -93,7 +96,9 @@ def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, colum
             criteria.set_value(iso_date)
             query.set_criteria(criteria)
 
+        
         request.set_query(query)
+        request.set_file_type(Choice('csv'))
         response = bulk_read_operations.create_bulk_read_job(request)
 
         if response is not None and isinstance(response.get_object(), ActionWrapper):
@@ -131,19 +136,28 @@ def get_job_status(job_id: str):
             status_info = {
                 'state': job_detail.get_state().get_value(),
                 'more_records': False,
-                'download_url': None
+                'download_url': None,
+                'next_page_token': None
             }
+            
+            if result:
+                print("\n--- Resultado ---")
+                for k, v in result.__dict__.items():
+                    print(f"{k}: {v}")
             
             if result is not None:
                 status_info['more_records'] = result.get_more_records()
                 status_info['download_url'] = result.get_download_url()
-            
+                
+                if result.get_more_records():
+                    status_info['next_page_token'] = result.get_next_page_token()
+
             return status_info
     except Exception as e:
         logger.exception(f"ERROR al consultar estado de {job_id}: {e}")
     return None
 
-def download_job_result_in_memory(job_id: str) -> io.BytesIO | None:
+def download_job_result_in_memory(job_id: str) -> io.BytesIO:
     """
     Descarga el resultado de un job de Zoho y devuelve su contenido binario en un BytesIO.
     Args:
@@ -226,11 +240,12 @@ def extract_data_from_zoho(module_api_name: str,client_id: str,client_secret: st
         initialize_zoho_sdk(client_id, client_secret, refresh_token, user_email)
 
         page = 1
+        current_next_page_token = None
         more_records_exist = True
 
         while more_records_exist:
             # 1. Crear el trabajo para la página actual
-            job_id = create_bulk_read_job(module_api_name, page, full_data, column_date)
+            job_id = create_bulk_read_job(module_api_name, page, full_data, column_date, current_next_page_token)
             
             if not job_id:
                 logger.error(f"EXTRACCIÓN: No se pudo crear el trabajo para la página {page}. Deteniendo proceso.")
@@ -246,6 +261,8 @@ def extract_data_from_zoho(module_api_name: str,client_id: str,client_secret: st
                 
             # Actualizar la variable que controla el bucle
             more_records_exist = status_info.get('more_records', False)
+            current_next_page_token = status_info.get('next_page_token', None)
+
             logger.info(f"EXTRACCIÓN: ¿Quedan más registros después de la pág {page}? -> {more_records_exist}")
             #Aqui es donde vamos a guardar los archivos zip en memoria
             result_container = {'content': None}
