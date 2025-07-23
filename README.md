@@ -85,10 +85,10 @@ El script está optimizado para funcionar sin escribir archivos temporales en el
 Esta fase se conecta a la **API Bulk Read de Zoho** y descarga los datos directamente a la memoria RAM.
 
 * El script se inicializa con tus credenciales de Zoho.
-* Crea trabajos de extracción de forma concurrente usando hilos (`threading`) para cada página de resultados.
+* Crea trabajos de extracción de forma secuencial para cada página de resultados.
 * **Extracción Completa vs. Incremental**: El script acepta un parámetro `full_data`.
     * Si `full_data=True`, extrae todos los registros del módulo.
-    * Si `full_data=False`, extrae solo los registros de los últimos 7 días. Debes especificar el nombre de la columna de fecha (`column_date`) a utilizar como filtro (ej. `Modified_Time`).
+    * Si `full_data=False`, extrae solo los registros de los últimos días que le especifiques en el parametro (`periodo`). Debes especificar el nombre de la columna de fecha de creación (ej`Created_date`) y actualización (ej. `Modified_Time`).
 * Los datos se descargan como archivos `.zip` y se almacenan como objetos `io.BytesIO` en una lista.
 
 ### 2. Transformación (Transform)
