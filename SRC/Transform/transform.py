@@ -36,7 +36,7 @@ def transform_data_in_memory(list_of_zip_bytes: list[io.BytesIO], module_api_nam
                 csv_filename = z.namelist()[0]
                 with z.open(csv_filename) as csv_file:
                     # Cargar CSV en DataFrame
-                    df = pd.read_csv(csv_file)
+                    df = pd.read_csv(csv_file, low_memory=False)
                     # Limpiar nombres de columna
                     df.columns = clean_column_names(df.columns)
                     all_dataframes.append(df)
