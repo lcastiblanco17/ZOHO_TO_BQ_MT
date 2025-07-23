@@ -12,7 +12,6 @@ from zcrmsdk.src.com.zoho.api.logger import Logger
 
 import os #crear carpetas temporales necesarias para zoho
 import time #tiempo de espera entre solicitudes
-import threading # Necesario para la lógica de extracción de Zoho que usa hilos
 import io #para leer el archivo en memoria
 from datetime import datetime, timedelta #para crear las fechas de consultas de fecha en caso de que full_data sea false
 from SRC.helper.logger_config import setup_logger #para mandar los mensajes por consola
@@ -64,7 +63,7 @@ def initialize_zoho_sdk(client_id: str, client_secret: str, refresh_token: str, 
         logger.exception(f"Error inesperado al inicializar el SDK: {e}")
         raise # Relanzar para que el orquestador sepa que falló
 
-def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, column_date:str, next_page_token:str = None ):
+def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, created_column_date:str, updated_column_date:str,periodo: int):
     """
     Crea un trabajo de Bulk Read en Zoho.
     Retorna el job_id si tiene éxito, de lo contrario None.
@@ -76,27 +75,39 @@ def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, colum
         next_page_token (str | None): Token para la siguiente página de registros, si existe.
     """
     try:
-        logger.info(f"Creando trabajo para el módulo '{module_api_name}', página {page}..."+(f" con token '{next_page_token}'" if next_page_token else "") + "...")
+        logger.info(f"Creando trabajo para el módulo '{module_api_name}', página {page}...")
         bulk_read_operations = BulkReadOperations()
         request = RequestWrapper()
         query = Query()
-
-        if next_page_token:
-            query.set_page_token(next_page_token)
-        else:
-            query.set_module(module_api_name)
-            query.set_page(page)
+        query.set_module(module_api_name)
+        query.set_page(page)
 
         if not full_data:
-            seven_days_ago = datetime.now() - timedelta(days=7)
+            logger.info("Aplicando criterio de fecha para los últimos 7 días (creado O modificado)...")
+            
+            
+            seven_days_ago = datetime.now() - timedelta(days=periodo)
             iso_date = seven_days_ago.strftime('%Y-%m-%dT00:00:00-05:00')
-            criteria = Criteria()
-            criteria.set_api_name(column_date)
-            criteria.set_comparator(Choice("greater_equal"))
-            criteria.set_value(iso_date)
-            query.set_criteria(criteria)
 
-        
+            main_criteria_group = Criteria()
+            main_criteria_group.set_group_operator(Choice("or"))
+            criteria_list = []
+
+            criteria_created = Criteria()
+            criteria_created.set_api_name(created_column_date)  
+            criteria_created.set_comparator(Choice("greater_equal"))
+            criteria_created.set_value(iso_date)
+            criteria_list.append(criteria_created) 
+
+            criteria_modified = Criteria()
+            criteria_modified.set_api_name(updated_column_date)
+            criteria_modified.set_comparator(Choice("greater_equal"))
+            criteria_modified.set_value(iso_date)
+            criteria_list.append(criteria_modified) 
+
+            main_criteria_group.set_group(criteria_list)
+            query.set_criteria(main_criteria_group)
+
         request.set_query(query)
         request.set_file_type(Choice('csv'))
         response = bulk_read_operations.create_bulk_read_job(request)
@@ -121,9 +132,7 @@ def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, colum
 def get_job_status(job_id: str):
     """
     Consulta el estado de un trabajo de Bulk Read en Zoho.
-    Retorna un diccionario con 'state', 'more_records' y 'download_url'.
-    Args:
-        job_id (str): id del trabajo que creamos en BULKREAD
+    Retorna un diccionario con 'state' y opcionalmente 'more_records' si el trabajo ha finalizado.
     """
     try:
         bulk_read_operations = BulkReadOperations()
@@ -135,23 +144,13 @@ def get_job_status(job_id: str):
 
             status_info = {
                 'state': job_detail.get_state().get_value(),
-                'more_records': False,
-                'download_url': None,
-                'next_page_token': None
+                'more_records': None
             }
             
-            if result:
-                print("\n--- Resultado ---")
-                for k, v in result.__dict__.items():
-                    print(f"{k}: {v}")
-            
-            if result is not None:
+            # El parámetro 'more_records' solo es fiable cuando el job está completado.
+            if result is not None and status_info['state'] == 'COMPLETED':
                 status_info['more_records'] = result.get_more_records()
-                status_info['download_url'] = result.get_download_url()
-                
-                if result.get_more_records():
-                    status_info['next_page_token'] = result.get_next_page_token()
-
+            
             return status_info
     except Exception as e:
         logger.exception(f"ERROR al consultar estado de {job_id}: {e}")
@@ -189,109 +188,86 @@ def download_job_result_in_memory(job_id: str) -> io.BytesIO:
         logger.exception(f"ERROR al descargar {job_id} en memoria: {e}")
     return None
 
-def _monitor_and_download_to_memory(job_id_hilo: str, result_dict: dict):
-    """
-    Monitorea el trabajo hasta que se complete y llama a la funcion download_job_result_in_memory para que lo descargue y agregue en result_dict
-    Args:
-        job_id (str): id del trabajo que creamos en BULKREAD
-        result_dict (dict) : donde se van a guardar los archivos zip en binario en memoria
-    """
-    logger.info(f"MONITOR [Hilo para Job ID: {job_id_hilo}]: Iniciado.")
-    while True:
-        status_info_hilo = get_job_status(job_id_hilo)
-        if not status_info_hilo:
-            logger.error(f"MONITOR [Hilo para Job ID: {job_id_hilo}]: No se pudo obtener el estado. Terminando hilo.")
-            break
-
-        state = status_info_hilo['state']
-        logger.info(f"MONITOR [Hilo para Job ID: {job_id_hilo}]: Estado actual es '{state}'.")
-
-        if state == 'COMPLETED':
-            logger.info(f"MONITOR [Hilo para Job ID: {job_id_hilo}]: ¡Trabajo completado! Procediendo a la descarga en memoria.")
-            downloaded_bytes = download_job_result_in_memory(job_id_hilo)
-            if downloaded_bytes:
-                result_dict['content'] = downloaded_bytes
-                break
-        elif state in ['FAILED', 'DELETED', 'SKIPPED']:
-            logger.error(f"MONITOR [Hilo para Job ID: {job_id_hilo}]: El trabajo falló o fue omitido. Estado: {state}. Terminando hilo.")
-            break
-        time.sleep(15) # Espera 15 segundos antes de volver a verificar el estado
-        logger.info(f"MONITOR [Hilo para Job ID: {job_id_hilo}]: Finalizado.")
 
 # --- 1. Función de Extracción 
-def extract_data_from_zoho(module_api_name: str,client_id: str,client_secret: str,refresh_token: str,user_email: str, full_data: bool = True, column_date ="") -> list[io.BytesIO]:
+def extract_data_from_zoho(module_api_name: str, client_id: str, client_secret: str, refresh_token: str, user_email: str, full_data: bool , created_column_date: str , updated_column_date: str , periodo: int) -> list[io.BytesIO]:
     """
-    Se conecta a Zoho, inicia y monitorea jobs de bulk read,
-    y descarga los resultados como una lista de objetos BytesIO en memoria.
-    Args:
-        module_api_name (str): nombre del modulo de zoho
-        client_id (str): id_cliente de zoho
-        client_secret (str): id_cliente_secreto de zoho
-        refresh_token (str): refresh token para crear los acces tokens de zoho
-        user_email (str): email del creador de la app de zoho
-        full_data (bool): variable binaria que indica si se van a extraer todos los datos (TRUE), o solo los de los ultimos 7 dias(False)
+    Se conecta a Zoho y extrae datos de forma secuencial.
+    Crea un trabajo, espera a que se complete, lo descarga, y solo entonces
+    revisa si necesita crear un trabajo para la siguiente página.
     """
-    logger.info(f"\n--- INICIANDO EXTRACCIÓN DE DATOS DE ZOHO PARA EL MÓDULO: {module_api_name} ---")
-    list_of_zip_bytes = [] #Donde se van a guardar los archivos
-    monitor_threads = [] # Para manejar la concurrencia de monitoreo/descarga
+    logger.info(f"\n--- INICIANDO EXTRACCIÓN SECUENCIAL DE ZOHO PARA: {module_api_name} ---")
+    list_of_zip_bytes = []
 
     try:
-        # Inicializar el SDK de Zoho al inicio de la extracción
         initialize_zoho_sdk(client_id, client_secret, refresh_token, user_email)
-
         page = 1
-        current_next_page_token = None
+        # Empezamos asumiendo que hay al menos una página de registros.
         more_records_exist = True
 
         while more_records_exist:
-            # 1. Crear el trabajo para la página actual
-            job_id = create_bulk_read_job(module_api_name, page, full_data, column_date, current_next_page_token)
+            # 1. Crear un único trabajo para la página actual
+            logger.info(f"EXTRACCIÓN: Creando trabajo para la página {page}...")
+            job_id = create_bulk_read_job(module_api_name, page, full_data, created_column_date, updated_column_date, periodo)
             
             if not job_id:
-                logger.error(f"EXTRACCIÓN: No se pudo crear el trabajo para la página {page}. Deteniendo proceso.")
+                logger.error(f"EXTRACCIÓN: No se pudo crear el trabajo para la página {page}. Abortando.")
                 break
-            
-            # Pequeña pausa para que el job_id se registre en el sistema de Zoho.
-            time.sleep(2) 
-            status_info = get_job_status(job_id)
-            
-            if not status_info:
-                logger.error(f"EXTRACCIÓN: No se pudo obtener el estado inicial del Job ID {job_id}. Deteniendo proceso.")
-                break
-                
-            # Actualizar la variable que controla el bucle
-            more_records_exist = status_info.get('more_records', False)
-            current_next_page_token = status_info.get('next_page_token', None)
 
-            logger.info(f"EXTRACCIÓN: ¿Quedan más registros después de la pág {page}? -> {more_records_exist}")
-            #Aqui es donde vamos a guardar los archivos zip en memoria
-            result_container = {'content': None}
-            thread = threading.Thread(
-                target=_monitor_and_download_to_memory,
-                args=(job_id, result_container)
-            )
-            thread.start()
-            monitor_threads.append((thread, result_container)) # Guardamos el hilo y su contenedor de resultados
-            
+            # 2. Monitorear ESE trabajo hasta que se complete o falle
+            logger.info(f"EXTRACCIÓN: Monitoreando Job ID {job_id} hasta su finalización...")
+            final_status = None
+            while True:
+                status_info = get_job_status(job_id)
+                if not status_info:
+                    logger.error(f"EXTRACCIÓN: No se pudo obtener el estado para Job ID {job_id}. Abortando.")
+                    # Marcamos como que no hay más registros para salir del bucle principal
+                    more_records_exist = False
+                    break
+                
+                current_state = status_info.get('state')
+                logger.info(f"EXTRACCIÓN: Estado actual del Job ID {job_id} es '{current_state}'.")
+
+                if current_state == 'COMPLETED':
+                    final_status = status_info
+                    break
+                
+                if current_state in ['FAILED', 'DELETED', 'SKIPPED']:
+                    logger.error(f"EXTRACCIÓN: El trabajo {job_id} terminó con estado '{current_state}'.")
+                    more_records_exist = False
+                    break
+                
+                # Esperar antes de volver a consultar
+                wait_time = 60 if full_data else 10
+                time.sleep(wait_time)
+
+            # 3. Si el trabajo se completó, proceder a la descarga y a la comprobación
+            if final_status and final_status['state'] == 'COMPLETED':
+                logger.info(f"EXTRACCIÓN: Trabajo {job_id} completado. Descargando resultados...")
+                
+                # Descargar el archivo
+                downloaded_content = download_job_result_in_memory(job_id)
+                if downloaded_content:
+                    list_of_zip_bytes.append(downloaded_content)
+                    logger.info(f"EXTRACCIÓN: Job ID {job_id} descargado y añadido a la lista.")
+                else:
+                    logger.warning(f"EXTRACCIÓN: El trabajo {job_id} se completó pero la descarga falló.")
+
+                # 4. AHORA SÍ, revisar si hay más páginas para la siguiente iteración
+                # El valor de more_records en final_status es ahora fiable.
+                more_records_exist = final_status.get('more_records')
+                logger.info(f"EXTRACCIÓN: ¿Hay más registros después de la página {page}? -> {more_records_exist}")
+
+            # Incrementar la página para la siguiente vuelta del bucle (si aplica)
             page += 1
-            time.sleep(2) # Pausa para no saturar la API de creación de trabajos
-
-        logger.info("EXTRACCIÓN: Finalizó la creación de trabajos. Esperando a que todas las descargas en memoria finalicen...")
+            # Pequeña pausa antes de crear el siguiente trabajo si es necesario
+            if more_records_exist:
+                time.sleep(2)
         
-        # Esperar a que todos los hilos terminen y recolectar los BytesIO
-        for thread, result_container in monitor_threads:
-            thread.join()
-            #verificamos que si haya guardado el archivo 
-            if result_container['content']:
-                #guardamos los archivos en una lista
-                list_of_zip_bytes.append(result_container['content'])
-            else:
-                logger.warning(f"Un hilo de descarga no pudo obtener contenido ZIP.")
-                
-        logger.info(f"EXTRACCIÓN: Proceso de extracción completado. Total de ZIPs en memoria: {len(list_of_zip_bytes)}")
+        logger.info(f"EXTRACCIÓN: Proceso finalizado. Total de ZIPs en memoria: {len(list_of_zip_bytes)}")
 
     except Exception as e:
-        logger.exception(f"ERROR EXCEPCIÓN durante la extracción de Zoho para {module_api_name}: {e}")
-        return [] # Devolver lista vacía en caso de error
+        logger.exception(f"ERROR CRÍTICO durante la extracción de Zoho para {module_api_name}: {e}")
+        return []
         
     return list_of_zip_bytes

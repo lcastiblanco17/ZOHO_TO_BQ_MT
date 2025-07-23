@@ -7,7 +7,7 @@ logger = setup_logger("main")
 
 
 # # --- Orquestador Principal del ETL ---
-def run_etl_pipeline(module_api_name: str,client_id: str,client_secret: str,refresh_token: str,user_email: str, column_date: str):
+def run_etl_pipeline(module_api_name: str,client_id: str,client_secret: str,refresh_token: str,user_email: str, full_data: bool = True, created_column_date: str = "Created_Time", updated_column_date: str = "Modified_Time", periodo: int = 7):
     """
     Orquesta el flujo completo de ETL (Extracción, Transformación, Carga)
     para un módulo específico de Zoho, recibiendo credenciales.
@@ -21,7 +21,10 @@ def run_etl_pipeline(module_api_name: str,client_id: str,client_secret: str,refr
             client_id,
             client_secret,
             refresh_token,
-            user_email
+            user_email,
+            full_data=full_data,
+            created_column_date=created_column_date,
+            updated_column_date=updated_column_date
         )
         if not list_of_zip_bytes:
             logger.error("ERROR: No se pudieron extraer datos de Zoho. Deteniendo el pipeline.")
@@ -53,10 +56,13 @@ if __name__ == '__main__':
     REFRESH_TOKEN = ""
     USER_EMAIL = ""
     MODULE = "" 
-    COLUMN_DATE = ""
+    FULL_DATA = False  # Cambiar a True si se desea extraer todos los datos sin filtrar por fecha
+    CREATED_COLUMN_DATE = "Created_Time"
+    UPDATED_COLUMN_DATE = "Modified_Time"
+    PERIODO = 7
     # --- Configuración General 
-    PROJECT_ID = ""
-    DESTINATION_ID = f"Zoho_consolidado_etl.data_{MODULE}_consolidado"
+    PROJECT_ID = "proyecto-zoho-practica"
+    DESTINATION_ID = f"raw_external_data.zohocrm_primary__{MODULE.lower()}"
 
     logger.info(f"--- Prueba de pipeline ETL local para {MODULE} ---")
     success = run_etl_pipeline(
@@ -65,6 +71,9 @@ if __name__ == '__main__':
         CLIENT_SECRET,
         REFRESH_TOKEN,
         USER_EMAIL,
-        COLUMN_DATE
+        FULL_DATA,
+        CREATED_COLUMN_DATE,
+        UPDATED_COLUMN_DATE,
+        PERIODO
     )
     logger.info(f"Resultado de la prueba local: {'Éxito' if success else 'Fallo'}")
