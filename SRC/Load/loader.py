@@ -28,7 +28,7 @@ def load_data_to_bigquery(dataframe: pd.DataFrame, project_id: str, destination_
             dataframe,
             destination_table=destination_table,
             project_id=project_id,
-            if_exists='replace',# para pruebas replace, pero luego le pasamos append
+            if_exists='append',# para pruebas replace, pero luego le pasamos append
             progress_bar=False,
             credentials = credentials  
         )
