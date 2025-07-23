@@ -38,7 +38,7 @@ def transform_data_in_memory(list_of_zip_bytes: list[io.BytesIO], module_api_nam
                     # Cargar CSV en DataFrame
                     df = pd.read_csv(csv_file, low_memory=False)
                     # Limpiar nombres de columna
-                    df.columns = clean_column_names(df.columns)
+                    df.columns = clean_column_names(df.columns) 
                     all_dataframes.append(df)
                     logger.info(f"INFO: ZIP {i+1}/{len(list_of_zip_bytes)} procesado.")
         except Exception as e:
