@@ -21,6 +21,7 @@ def load_data_to_bigquery(dataframe: pd.DataFrame, project_id: str, destination_
     if dataframe.empty:
         logger.warning("AVISO: El DataFrame está vacío. No se cargarán datos.")
         return
+    
 
     try:
         
@@ -33,6 +34,7 @@ def load_data_to_bigquery(dataframe: pd.DataFrame, project_id: str, destination_
             credentials = credentials  
         )
         logger.info(f"Datos cargados correctamente en '{destination_table}'.")
+    
 
     except Exception as e:
         logger.exception(f"ERROR: Falló la carga a BigQuery. Causa: {e}")

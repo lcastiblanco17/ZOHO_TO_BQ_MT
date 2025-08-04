@@ -63,7 +63,7 @@ def initialize_zoho_sdk(client_id: str, client_secret: str, refresh_token: str, 
         logger.exception(f"Error inesperado al inicializar el SDK: {e}")
         raise # Relanzar para que el orquestador sepa que falló
 
-def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, created_column_date:str, updated_column_date:str,periodo: int):
+def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, created_column_date:str, updated_column_date:str,period: int):
     """
     Crea un trabajo de Bulk Read en Zoho.
     Retorna el job_id si tiene éxito, de lo contrario None.
@@ -71,8 +71,10 @@ def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, creat
     Args:
         module_api_name (str): nombre del modulo de zoho
         page (int): numero de pagina a extraer de zoho
-        full_data (bool): variable binaria que indica si se van a extraer todos los datos (TRUE), o solo los de los ultimos 7 dias(False)
-        next_page_token (str | None): Token para la siguiente página de registros, si existe.
+        full_data (bool): variable binaria que indica si se van a extraer todos los datos (TRUE), o solo los de los ultimos k dias(False)
+        created_column_date (str): nombre de la columna de fecha de creación
+        updated_column_date (str): nombre de la columna de fecha de actualización
+        period (int): periodo de días para filtrar los datos si full_data es False
     """
     try:
         logger.info(f"Creando trabajo para el módulo '{module_api_name}', página {page}...")
@@ -86,8 +88,8 @@ def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, creat
             logger.info("Aplicando criterio de fecha para los últimos 7 días (creado O modificado)...")
             
             
-            seven_days_ago = datetime.now() - timedelta(days=periodo)
-            iso_date = seven_days_ago.strftime('%Y-%m-%dT00:00:00-05:00')
+            k_days_ago = datetime.now() - timedelta(days=period)
+            iso_date = k_days_ago.strftime('%Y-%m-%dT00:00:00-05:00')
 
             main_criteria_group = Criteria()
             main_criteria_group.set_group_operator(Choice("or"))
@@ -129,10 +131,12 @@ def create_bulk_read_job(module_api_name: str, page: int, full_data: bool, creat
         logger.exception(f"ERROR al crear trabajo: {e}")
     return None
 
-def get_job_status(job_id: str):
+def get_job_status(job_id: str) -> dict:
     """
     Consulta el estado de un trabajo de Bulk Read en Zoho.
     Retorna un diccionario con 'state' y opcionalmente 'more_records' si el trabajo ha finalizado.
+    Args:
+        job_id (str): id del trabajo que creamos en BULKREAD
     """
     try:
         bulk_read_operations = BulkReadOperations()
@@ -190,7 +194,7 @@ def download_job_result_in_memory(job_id: str) -> io.BytesIO:
 
 
 # --- 1. Función de Extracción 
-def extract_data_from_zoho(module_api_name: str, client_id: str, client_secret: str, refresh_token: str, user_email: str, full_data: bool , created_column_date: str , updated_column_date: str , periodo: int) -> list[io.BytesIO]:
+def extract_data_from_zoho(module_api_name: str, client_id: str, client_secret: str, refresh_token: str, user_email: str, full_data: bool , created_column_date: str , updated_column_date: str , period: int) -> list[io.BytesIO]:
     """
     Se conecta a Zoho y extrae datos de forma secuencial.
     Crea un trabajo, espera a que se complete, lo descarga, y solo entonces
@@ -208,7 +212,7 @@ def extract_data_from_zoho(module_api_name: str, client_id: str, client_secret: 
         while more_records_exist:
             # 1. Crear un único trabajo para la página actual
             logger.info(f"EXTRACCIÓN: Creando trabajo para la página {page}...")
-            job_id = create_bulk_read_job(module_api_name, page, full_data, created_column_date, updated_column_date, periodo)
+            job_id = create_bulk_read_job(module_api_name, page, full_data, created_column_date, updated_column_date, period)
             
             if not job_id:
                 logger.error(f"EXTRACCIÓN: No se pudo crear el trabajo para la página {page}. Abortando.")

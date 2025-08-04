@@ -5,6 +5,8 @@ import zipfile #leer los archivos zip en memoria
 import pandas as pd #crear el dataframe con los datos y unificarlos
 from unidecode import unidecode #pasar nombres de columnas al formato de big query mas especificamente Eliminar caracteres no ASCII (como ñ, ó)
 from SRC.helper.logger_config import setup_logger #informacion relevante a la consola
+from datetime import datetime
+
 
 logger = setup_logger("transform")
 
@@ -13,14 +15,14 @@ def clean_column_names(columns):
     columns = [re.sub(r'[^0-9a-zA-Z_]', '_', col) for col in columns]
     return columns
 # --- 2. Función de Transformación ---
-def transform_data_in_memory(list_of_zip_bytes: list[io.BytesIO], module_api_name: str) -> pd.DataFrame:
+def transform_data_in_memory(list_of_zip_bytes: list[io.BytesIO]) -> pd.DataFrame:
     """
     Toma una lista de ZIPs en memoria, los descomprime, los carga en DataFrames de Pandas,
     aplica las transformaciones y consolidación, y devuelve un único DataFrame final.
 
     Args:
         list_of_zip_bytes (list[io.BytesIO]): Lista donde estan almacenados los zip descargados en memoria.
-        module_api_name (str): Nombre del modulo.
+        
     """
     logger.info("\n--- INICIANDO PROCESO DE TRANSFORMACIÓN EN MEMORIA ---")
     all_dataframes = [] #donde se van a guardar los dataframes
@@ -36,7 +38,7 @@ def transform_data_in_memory(list_of_zip_bytes: list[io.BytesIO], module_api_nam
                 csv_filename = z.namelist()[0]
                 with z.open(csv_filename) as csv_file:
                     # Cargar CSV en DataFrame
-                    df = pd.read_csv(csv_file, low_memory=False)
+                    df = pd.read_csv(csv_file, low_memory=False, dtype= str)
                     # Limpiar nombres de columna
                     df.columns = clean_column_names(df.columns) 
                     all_dataframes.append(df)
@@ -49,5 +51,6 @@ def transform_data_in_memory(list_of_zip_bytes: list[io.BytesIO], module_api_nam
         return pd.DataFrame() # Devuelve un DataFrame vacío si no se pudo procesar nada
 
     final_df = pd.concat(all_dataframes, ignore_index=True)
+    final_df["processed_at"] = pd.Timestamp.utcnow()
     logger.info(f"Transformación completa. Total de filas consolidadas: {len(final_df)}")
     return final_df

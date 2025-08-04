@@ -24,14 +24,16 @@ def run_etl_pipeline(module_api_name: str,client_id: str,client_secret: str,refr
             user_email,
             full_data=full_data,
             created_column_date=created_column_date,
-            updated_column_date=updated_column_date
+            updated_column_date=updated_column_date,
+            period=periodo
+            
         )
         if not list_of_zip_bytes:
             logger.error("ERROR: No se pudieron extraer datos de Zoho. Deteniendo el pipeline.")
             return False
 
         # Paso 2: Transformación
-        final_dataframe = transform_data_in_memory(list_of_zip_bytes, module_api_name)
+        final_dataframe = transform_data_in_memory(list_of_zip_bytes)
         if final_dataframe.empty:
             logger.info("AVISO: El DataFrame final está vacío después de la transformación. No se cargará nada.")
             return True # Considerar como éxito si no hay datos, pero el proceso fue correcto
@@ -55,13 +57,13 @@ if __name__ == '__main__':
     CLIENT_SECRET = ""
     REFRESH_TOKEN = ""
     USER_EMAIL = ""
-    MODULE = "" 
+    MODULE = "Leads" 
     FULL_DATA = False  # Cambiar a True si se desea extraer todos los datos sin filtrar por fecha
     CREATED_COLUMN_DATE = "Created_Time"
     UPDATED_COLUMN_DATE = "Modified_Time"
-    PERIODO = 7
+    PERIODO = 1
     # --- Configuración General 
-    PROJECT_ID = "proyecto-zoho-practica"
+    PROJECT_ID = ""
     DESTINATION_ID = f"raw_external_data.zohocrm_primary__{MODULE.lower()}"
 
     logger.info(f"--- Prueba de pipeline ETL local para {MODULE} ---")
